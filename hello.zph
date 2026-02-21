@@ -1,6 +1,0 @@
-// ═══════════════════════════════════════════════════════════
-// hello.zph — Your first Zephyr program
-// ═══════════════════════════════════════════════════════════
-
-let name = input("What's your name? ")
-println("Hello, #{name}! Welcome to Zephyr!")
