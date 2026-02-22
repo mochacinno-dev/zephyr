@@ -1,6 +1,5 @@
 // ═══════════════════════════════════════════════════════════
 // Zephyr FS — file system I/O, directory ops, path utilities
-// Zero external dependencies — pure std::fs / std::path.
 // ═══════════════════════════════════════════════════════════
 //
 // QUICK REFERENCE

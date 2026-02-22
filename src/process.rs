@@ -2,7 +2,7 @@
 // Zephyr Process — shell execution and environment access
 // ═══════════════════════════════════════════════════════════
 //
-// FUNCTIONS EXPOSED TO ZEPHYR
+// QUICK REFERENCE
 // ───────────────────────────────────────────────────────────
 //
 //  SIMPLE EXECUTION

@@ -1,9 +1,8 @@
 // ═══════════════════════════════════════════════════════════
 // Zephyr JSON — parser, serializer, and access helpers
-// No external crates required.
 // ═══════════════════════════════════════════════════════════
 //
-// Exposed to Zephyr:
+// QUICK REFERENCE
 //
 //   CORE
 //   json_parse(s)              String → Result<Value, String>
