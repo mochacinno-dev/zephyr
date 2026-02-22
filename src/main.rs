@@ -76,7 +76,7 @@ fn repl() {
     println!("  ███████╗███████╗██║     ██║  ██║   ██║   ██║  ██║");
     println!("  ╚══════╝╚══════╝╚═╝     ╚═╝  ╚═╝   ╚═╝   ╚═╝  ╚═╝");
     println!("\x1b[0m");
-    println!("  \x1b[90mThe Zephyr Programming Language v0.1.0\x1b[0m");
+    println!("  \x1b[90mThe Zephyr Programming Language v0.9.8\x1b[0m");
     println!("  \x1b[90mType :help for help, :quit to exit\x1b[0m");
     println!();
 
