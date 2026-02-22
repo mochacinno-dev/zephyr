@@ -1,0 +1,304 @@
+// ═══════════════════════════════════════════════════════════
+//  async_demo.zph — Zephyr Async/Await standard library demo
+// ═══════════════════════════════════════════════════════════
+
+// ── 1. Single async HTTP GET ──────────────────────────────────────────────────
+
+println("── 1. SINGLE ASYNC GET ─────────────────")
+
+let task = async_http_get("https://httpbin.org/get")
+println("Task spawned, doing other work...")
+async_sleep(10)
+println("Still not blocked!")
+
+let result = async_await(task)
+match result {
+    Ok(body) => println("Response length: #{body.len()} chars")
+    Err(e)   => println("Error: #{e}")
+}
+
+
+// ── 2. Concurrent GET requests ────────────────────────────────────────────────
+
+println("── 2. CONCURRENT GETS ──────────────────")
+
+let t1 = async_http_get("https://jsonplaceholder.typicode.com/todos/1")
+let t2 = async_http_get("https://jsonplaceholder.typicode.com/todos/2")
+let t3 = async_http_get("https://jsonplaceholder.typicode.com/todos/3")
+
+println("3 tasks running in parallel...")
+
+let results = async_await_all([t1, t2, t3])
+for result in results {
+    match result {
+        Ok(body) => println("Got #{body.len()} chars")
+        Err(e)   => println("Error: #{e}")
+    }
+}
+
+
+// ── 3. Racing — first response wins ──────────────────────────────────────────
+
+println("── 3. RACE ─────────────────────────────")
+
+let mirror1 = async_http_get("https://httpbin.org/delay/1")
+let mirror2 = async_http_get("https://httpbin.org/get")
+
+println("Racing two requests — fastest wins...")
+let fastest = async_await_any([mirror1, mirror2])
+match fastest {
+    Ok(body) => println("Winner returned #{body.len()} chars")
+    Err(e)   => println("Error: #{e}")
+}
+
+
+// ── 4. Timeout ────────────────────────────────────────────────────────────────
+
+println("── 4. TIMEOUT ──────────────────────────")
+
+let slow_task = async_http_get("https://httpbin.org/delay/3")
+let result = async_timeout(slow_task, 1500)
+
+match result {
+    Ok(body)       => println("Got response (#{body.len()} chars)")
+    Err("timeout") => println("Request timed out after 1500ms (expected)")
+    Err(e)         => println("Error: #{e}")
+}
+
+
+// ── 5. task_is_done (polling) ─────────────────────────────────────────────────
+
+println("── 5. POLLING ──────────────────────────")
+
+let poll_task = async_sleep_task(400)
+var polls = 0
+while !task_is_done(poll_task) {
+    polls = polls + 1
+    async_sleep(50)
+}
+let done_result = async_await(poll_task)
+println("Polled #{polls} times before task completed")
+
+
+// ── 6. Parallel shell commands ────────────────────────────────────────────────
+
+println("── 6. PARALLEL EXEC ────────────────────")
+
+let t_hostname = async_exec("hostname")
+let t_date     = async_exec("date")
+let t_whoami   = async_exec("whoami")
+let t_uptime   = async_exec("uptime -p")
+
+let exec_results = async_await_all([t_hostname, t_date, t_whoami, t_uptime])
+let labels = ["hostname", "date", "whoami", "uptime"]
+var i = 0
+for result in exec_results {
+    let label = labels[i]
+    match result {
+        Ok(out) => println("#{label}: #{out}")
+        Err(e)  => println("#{label} error: #{e}")
+    }
+    i = i + 1
+}
+
+
+// ── 7. async_map ─────────────────────────────────────────────────────────────
+
+println("── 7. ASYNC MAP ────────────────────────")
+
+let todo_urls = [
+    "https://jsonplaceholder.typicode.com/todos/4",
+    "https://jsonplaceholder.typicode.com/todos/5",
+    "https://jsonplaceholder.typicode.com/todos/6",
+]
+
+let mapped_tasks = async_map(todo_urls, |url| => url)
+let mapped_results = async_await_all(mapped_tasks)
+
+println("Fetched #{mapped_results.len()} todos in parallel:")
+for result in mapped_results {
+    match result {
+        Ok(body) => {
+            let parsed = json_parse(body)
+            match parsed {
+                Ok(todo) => println("  Todo: #{json_get(todo, "title")}")
+                Err(_)   => println("  (could not parse JSON)")
+            }
+        }
+        Err(e) => println("  Error: #{e}")
+    }
+}
+
+
+// ── 8. Channels ───────────────────────────────────────────────────────────────
+
+println("── 8. CHANNELS ─────────────────────────")
+
+let ch = channel()
+
+// Send some values
+channel_send(ch, "message one")
+channel_send(ch, "message two")
+channel_send(ch, 42)
+channel_send(ch, true)
+
+// Receive them
+let msg1 = channel_recv(ch)
+let msg2 = channel_recv(ch)
+let msg3 = channel_recv(ch)
+let msg4 = channel_recv(ch)
+
+println("Received: #{msg1}")
+println("Received: #{msg2}")
+println("Received: #{msg3}")
+println("Received: #{msg4}")
+
+
+// ── 9. Bounded channel ────────────────────────────────────────────────────────
+
+println("── 9. BOUNDED CHANNEL ──────────────────")
+
+let bch = channel_bounded(2)
+
+let s1 = channel_send(bch, "a")
+let s2 = channel_send(bch, "b")
+let s3 = channel_send(bch, "c")  // would block or fail — capacity 2
+
+match s1 { Ok(_) => println("Sent 'a'") Err(e) => println("Send 'a' failed: #{e}") }
+match s2 { Ok(_) => println("Sent 'b'") Err(e) => println("Send 'b' failed: #{e}") }
+match s3 { Ok(_) => println("Sent 'c' (unexpected)") Err(e) => println("Send 'c' correctly rejected: #{e}") }
+
+
+// ── 10. channel_try_recv ──────────────────────────────────────────────────────
+
+println("── 10. TRY_RECV ────────────────────────")
+
+let tch = channel()
+
+// Nothing in channel yet
+let empty = channel_try_recv(tch)
+match empty {
+    Ok(v) => println("Unexpectedly got: #{v}")
+    Err(_) => println("Channel empty (expected)")
+}
+
+channel_send(tch, "now there is something")
+let something = channel_try_recv(tch)
+match something {
+    Ok(v) => println("Got: #{v}")
+    Err(_) => println("Still empty (unexpected)")
+}
+
+
+// ── 11. Async POST ────────────────────────────────────────────────────────────
+
+println("── 11. ASYNC POST ──────────────────────")
+
+let post_task = async_http_post_json(
+    "https://jsonplaceholder.typicode.com/posts",
+    "{\"title\": \"Async Zephyr\", \"body\": \"Posted from async code!\", \"userId\": 1}"
+)
+
+let post_result = async_await(post_task)
+match post_result {
+    Ok(body) => {
+        let parsed = json_parse(body)
+        match parsed {
+            Ok(data) => println("Created post with id: #{json_get(data, "id")}")
+            Err(e)   => println("Parse error: #{e}")
+        }
+    }
+    Err(e) => println("POST failed: #{e}")
+}
+
+
+// ── 12. Real-world pattern: parallel API calls + aggregation ─────────────────
+
+println("── 12. REAL-WORLD PATTERN ──────────────")
+
+fun fetch_todos_async(ids: [Int]) -> [String] {
+    var tasks = []
+    for id in ids {
+        let url = "https://jsonplaceholder.typicode.com/todos/#{id}"
+        push(tasks, async_http_get(url))
+    }
+
+    let results = async_await_all(tasks)
+    var titles = []
+
+    for result in results {
+        match result {
+            Ok(body) => {
+                let parsed = json_parse(body)
+                match parsed {
+                    Ok(todo) => push(titles, json_get(todo, "title"))
+                    Err(_)   => push(titles, "(parse error)")
+                }
+            }
+            Err(e) => push(titles, "Error: #{e}")
+        }
+    }
+    titles
+}
+
+let todo_ids = [7, 8, 9, 10]
+println("Fetching #{todo_ids.len()} todos concurrently...")
+let titles = fetch_todos_async(todo_ids)
+for title in titles {
+    println("  • #{title}")
+}
+
+
+// ── 13. Fire-and-forget with async_sleep_task ─────────────────────────────────
+
+println("── 13. FIRE AND FORGET ─────────────────")
+
+fun wait_and_log(label: String, ms: Int) -> Nil {
+    let t = async_sleep_task(ms)
+    let _ = async_await(t)
+    println("  [#{label}] done after #{ms}ms")
+}
+
+let fire1 = async_exec("echo 'background task 1'")
+let fire2 = async_exec("echo 'background task 2'")
+let fire3 = async_exec("echo 'background task 3'")
+println("Three background tasks started...")
+let all_fire = async_await_all([fire1, fire2, fire3])
+for result in all_fire {
+    match result {
+        Ok(out) => println("  #{out}")
+        Err(e)  => println("  error: #{e}")
+    }
+}
+
+
+// ── 14. Error resilience pattern ──────────────────────────────────────────────
+
+println("── 14. ERROR RESILIENCE ────────────────")
+
+fun fetch_with_fallback(primary_url: String, fallback_url: String) -> String {
+    let t = async_http_get(primary_url)
+    let result = async_timeout(t, 3000)
+    match result {
+        Ok(body) => body
+        Err(_) => {
+            println("  Primary failed, trying fallback...")
+            let t2 = async_http_get(fallback_url)
+            let r2 = async_await(t2)
+            match r2 {
+                Ok(body) => body
+                Err(e)   => "Error: #{e}"
+            }
+        }
+    }
+}
+
+let body = fetch_with_fallback(
+    "https://httpbin.org/status/500",
+    "https://httpbin.org/get"
+)
+println("Got response (#{body.len()} chars)")
+
+
+println("")
+println("Async demo complete!")

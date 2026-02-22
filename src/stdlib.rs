@@ -9,6 +9,7 @@ use crate::net;
 use crate::json;
 use crate::process;
 use crate::zfs as fs;
+use crate::async_rt;
 
 pub fn register(env: &Env) {
     let natives = [
@@ -44,6 +45,13 @@ pub fn register(env: &Env) {
         env.define(name, Value::Function(ZephyrFn::Native(name.to_string())));
     }
     for name in fs::fs_functions() {
+        env.define(name, Value::Function(ZephyrFn::Native(name.to_string())));
+    }
+    // Async runtime
+    for name in async_rt::async_functions() {
+        env.define(name, Value::Function(ZephyrFn::Native(name.to_string())));
+    }
+    for name in async_rt::async_http_functions() {
         env.define(name, Value::Function(ZephyrFn::Native(name.to_string())));
     }
 }
@@ -258,8 +266,6 @@ pub fn call_native(name: &str, args: Vec<Value>, _env: &Env) -> Result<Value, St
         // ── Functional ────────────────────────────────────────────────────
 
         "map" | "filter" | "reduce" | "zip" | "enumerate" | "sorted" => {
-            // These need a callable and collection — handled via method calls on List
-            // Here we provide a bare function alias
             Err(format!("{} is better used as a method: list.{}(fn)", name, name))
         }
 
@@ -356,14 +362,26 @@ pub fn call_native(name: &str, args: Vec<Value>, _env: &Env) -> Result<Value, St
         name if json::json_functions().contains(&name) => {
             json::call_json(name, args).map_err(|e| e)
         }
+
         // ── Process ───────────────────────────────────────────────────────────
         name if process::process_functions().contains(&name) => {
             process::call_process(name, args).map_err(|e| e)
         }
+
         // ── File System ───────────────────────────────────────────────────────
         name if fs::fs_functions().contains(&name) => {
             fs::call_fs(name, args).map_err(|e| e)
         }
+
+        // ── Async ─────────────────────────────────────────────────────────────
+        name if async_rt::async_functions().contains(&name) => {
+            async_rt::call_async(name, args).map_err(|e| e)
+        }
+
+        name if async_rt::async_http_functions().contains(&name) => {
+            async_rt::call_async_http(name, args).map_err(|e| e)
+        }
+
         _ => Err(format!("Unknown native function '{}'", name))
     }
 }
@@ -426,14 +444,9 @@ pub fn call_builtin_method(obj: Value, method: &str, args: Vec<Value>, _env: &En
             Ok(Value::List(Rc::new(RefCell::new(list[start.min(list.len())..end.min(list.len())].to_vec()))))
         }
         (Value::List(v), "map") | (Value::List(v), "filter") | (Value::List(v), "reduce") => {
-            let func = args.into_iter().next().ok_or(format!("{}() requires a function", method))?;
-            let list = v.borrow().clone();
+            let _func = args.into_iter().next().ok_or(format!("{}() requires a function", method))?;
             match method {
-                "map" => {
-                    // We can't call interpreter from here, so we create a transformed list
-                    // This requires calling the function — we'll return a note to user
-                    Err("map() on List requires the Zephyr interpreter context; use a for loop or call via global map(list, fn)".into())
-                }
+                "map" => Err("map() on List requires the Zephyr interpreter context; use a for loop or call via global map(list, fn)".into()),
                 _ => Err(format!("{}() requires interpreter context", method))
             }
         }

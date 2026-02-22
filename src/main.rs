@@ -11,6 +11,7 @@ mod net;
 mod json;
 mod process;
 mod zfs;
+mod async_rt;
 
 use std::env;
 use std::fs;
