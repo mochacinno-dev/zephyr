@@ -178,6 +178,35 @@ impl Parser {
         Ok(stmts)
     }
 
+    /// Like parse_block_body but promotes the last Expr statement to a tail
+    /// expression, so that block-bodied match arms return their last value.
+    ///
+    /// Without this, a match arm like:
+    ///
+    ///   Err(_) => {
+    ///       println("fallback...")
+    ///       some_call()       // ← this result was silently discarded
+    ///   }
+    ///
+    /// would always return Nil because Expr::Block(stmts, None) has no tail.
+    fn parse_block_body_with_tail(&mut self) -> Result<(Vec<Stmt>, Option<Box<Expr>>), String> {
+        let mut stmts = self.parse_block_body()?;
+        // If the last statement is a bare expression (not a let/return/etc),
+        // pop it off and use it as the block's tail expression so it becomes
+        // the block's return value.
+        let tail = match stmts.last() {
+            Some(Stmt::Expr(_)) => {
+                if let Some(Stmt::Expr(e)) = stmts.pop() {
+                    Some(Box::new(e))
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+        Ok((stmts, tail))
+    }
+
     fn parse_struct_def(&mut self, is_pub: bool) -> Result<Stmt, String> {
         self.expect(&Token::Struct)?;
         let name = self.expect_ident()?;
@@ -615,7 +644,7 @@ impl Parser {
                     self.advance();
                     return Ok(Expr::MapLit(vec![]));
                 }
-                
+
                 // Check for map literal: could start with expr: expr
                 // We parse it as a block unless we detect key: value pattern
                 let mut stmts = Vec::new();
@@ -748,10 +777,12 @@ impl Parser {
             let guard = if self.eat(&Token::If) { Some(self.parse_expr()?) } else { None };
             self.eat(&Token::FatArrow);
             let body = if self.check(&Token::LBrace) {
+                // Block-bodied arm: promote the last expression to a tail so
+                // the arm returns a value rather than always returning Nil.
                 self.advance();
-                let stmts = self.parse_block_body()?;
+                let (stmts, tail) = self.parse_block_body_with_tail()?;
                 self.expect(&Token::RBrace)?;
-                Expr::Block(stmts, None)
+                Expr::Block(stmts, tail)
             } else {
                 self.parse_expr()?
             };

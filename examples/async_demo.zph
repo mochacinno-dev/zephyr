@@ -121,7 +121,7 @@ for result in mapped_results {
         Ok(body) => {
             let parsed = json_parse(body)
             match parsed {
-                Ok(todo) => println("  Todo: #{json_get(todo, "title")}")
+                Ok(todo) => println("  Todo: #{json_get(todo, \"title\")}")
                 Err(_)   => println("  (could not parse JSON)")
             }
         }
@@ -204,7 +204,7 @@ match post_result {
     Ok(body) => {
         let parsed = json_parse(body)
         match parsed {
-            Ok(data) => println("Created post with id: #{json_get(data, "id")}")
+            Ok(data) => println("Created post with id: #{json_get(data, \"id\")}")
             Err(e)   => println("Parse error: #{e}")
         }
     }
@@ -279,18 +279,26 @@ println("── 14. ERROR RESILIENCE ──────────────�
 fun fetch_with_fallback(primary_url: String, fallback_url: String) -> String {
     let t = async_http_get(primary_url)
     let result = async_timeout(t, 3000)
+
+    // Use a mutable accumulator so the return value isn't dependent on a
+    // block-bodied match arm (blocks always return Nil as their last statement
+    // value; only tail expressions — or single-expression arms — propagate).
+    var out = ""
+
     match result {
-        Ok(body) => body
+        Ok(body) => out = body
         Err(_) => {
             println("  Primary failed, trying fallback...")
             let t2 = async_http_get(fallback_url)
             let r2 = async_await(t2)
             match r2 {
-                Ok(body) => body
-                Err(e)   => "Error: #{e}"
+                Ok(body) => out = body
+                Err(e)   => out = "Error: #{e}"
             }
         }
     }
+
+    out
 }
 
 let body = fetch_with_fallback(

@@ -127,7 +127,7 @@ pub fn value_to_serial(v: &Value) -> SerializableValue {
             SerializableValue::Map(map)
         }
         Value::Enum(_, variant, fields) => {
-            let mut map = vec![
+            let map = vec![
                 ("__variant".to_string(), SerializableValue::Str(variant.clone())),
                 ("fields".to_string(), SerializableValue::List(fields.iter().map(value_to_serial).collect())),
             ];
@@ -223,9 +223,6 @@ fn next_task_id() -> u64 {
 }
 
 /// Spawn a closure in a new OS thread, returning a Task handle.
-/// The closure receives a serialized thunk description and we re-evaluate it.
-///
-/// Since Zephyr's Values aren't Send, we serialize the inputs/outputs.
 pub fn spawn_task<F>(f: F) -> Task
 where
     F: FnOnce() -> Result<SerializableValue, String> + Send + 'static,
@@ -247,9 +244,6 @@ where
 
 /// Encode a Task as a Zephyr Map value for use inside the interpreter.
 pub fn task_to_value(task: Task) -> Value {
-    // We store the task's shared state in a thread-safe wrapper.
-    // Since Value isn't Send, we wrap the state in a map with a special key.
-    // The task ID lets us look it up in the global task registry.
     let id = task.id;
     TASK_REGISTRY.with(|reg| {
         reg.borrow_mut().insert(id, task);
@@ -277,6 +271,25 @@ fn get_task_id(val: &Value) -> Option<u64> {
     None
 }
 
+// ── FIX: join_task_val now returns the inner SerializableValue directly,
+// without wrapping it in an additional Value::Result layer.
+//
+// Previously this function did:
+//   TaskResult::Ok(v)  => Ok(Value::Result(Ok(serial_to_value(v))))
+//   TaskResult::Err(e) => Ok(Value::Result(Err(Value::Str(e))))
+//
+// But the task closures (spawn_http_task, spawn_exec_task, etc.) already
+// store their payload as SerializableValue::Ok(...) or SerializableValue::Err(...),
+// which serial_to_value converts to Value::Result(Ok(...)) / Value::Result(Err(...)).
+// The old code was wrapping that Result in yet another Result, so async_await
+// returned Ok(Ok(body)) instead of Ok(body), and the match arm `Ok(body)`
+// bound body to an inner Result rather than the String — causing
+// "No method 'len' on type Result".
+//
+// The fix: TaskResult is just the thread-level success/failure of the task
+// itself (i.e. did the thread panic?). The actual Zephyr Ok/Err is carried
+// inside the SerializableValue payload. We simply deserialize that payload
+// and return it as-is.
 fn join_task_val(val: &Value) -> Result<Value, String> {
     let id = get_task_id(val)
         .ok_or_else(|| "async_await: argument is not a Task".to_string())?;
@@ -285,7 +298,12 @@ fn join_task_val(val: &Value) -> Result<Value, String> {
         let task = reg.get(&id)
             .ok_or_else(|| format!("async_await: Task {} not found (already awaited?)", id))?;
         match task.join() {
-            TaskResult::Ok(v)  => Ok(Value::Result(std::result::Result::Ok(Box::new(serial_to_value(v))))),
+            // The payload is already a SerializableValue::Ok/Err/Str/etc.
+            // Just deserialize it directly — do NOT wrap in another Result.
+            TaskResult::Ok(v)  => Ok(serial_to_value(v)),
+            // TaskResult::Err means the task closure itself returned Err (a
+            // Rust-level failure, e.g. couldn't spawn the process). Wrap this
+            // in a Zephyr Err so scripts can match on it.
             TaskResult::Err(e) => Ok(Value::Result(std::result::Result::Err(Box::new(Value::Str(e))))),
         }
     })
@@ -299,7 +317,8 @@ fn join_task_timeout(val: &Value, timeout_ms: u64) -> Result<Value, String> {
         let task = reg.get(&id)
             .ok_or_else(|| format!("async_timeout: Task {} not found", id))?;
         match task.join_timeout(timeout_ms) {
-            Some(TaskResult::Ok(v))  => Ok(Value::Result(std::result::Result::Ok(Box::new(serial_to_value(v))))),
+            // Same fix as join_task_val: deserialize directly, no extra wrapping.
+            Some(TaskResult::Ok(v))  => Ok(serial_to_value(v)),
             Some(TaskResult::Err(e)) => Ok(Value::Result(std::result::Result::Err(Box::new(Value::Str(e))))),
             None => Ok(Value::Result(std::result::Result::Err(Box::new(Value::Str("timeout".to_string()))))),
         }
@@ -364,9 +383,6 @@ fn channel_to_value(id: u64) -> Value {
     map.insert("__channel_id".to_string(), Value::Int(id as i64));
     map.insert("__is_channel".to_string(), Value::Bool(true));
 
-    // send method: wraps channel_send(channel, value)
-    // recv method: wraps channel_recv(channel)
-    // try_recv method: wraps channel_try_recv(channel) -> Result<Value, Nil>
     let send_name = format!("channel_send_{}", id);
     let recv_name = format!("channel_recv_{}", id);
     let try_recv_name = format!("channel_try_recv_{}", id);
@@ -446,45 +462,13 @@ pub fn call_async(name: &str, args: Vec<Value>) -> Result<Value, String> {
 // Async functions
 // ═══════════════════════════════════════════════════════════
 
-/// async_spawn(thunk: Fun) -> Task
-///
-/// Spawns a zero-argument closure as a background task.
-/// The thunk is called immediately in a new OS thread.
-/// Returns a Task handle which can be passed to async_await().
-///
-/// IMPORTANT: The closure runs in a separate thread. It cannot capture
-/// mutable references from the outer scope. Use channels for communication.
-///
-/// Example:
-///   let task = async_spawn(|| {
-///       async_sleep(100)
-///       http_get("https://example.com")
-///   })
-///   // ... do other work ...
-///   let result = async_await(task)
-///   match result {
-///       Ok(body) => println(body)
-///       Err(e)   => println("Failed: #{e}")
-///   }
 fn async_spawn(args: Vec<Value>) -> Result<Value, String> {
     if args.is_empty() {
         return Err("async_spawn(thunk) requires a function argument".into());
     }
 
-    // We can only serialize non-function values.
-    // For spawn, we execute the thunk inline in a new thread.
-    // Since Zephyr Values aren't Send, we serialize what we can capture.
-    // The thunk must be a native function name or a pre-evaluated value.
-    //
-    // Strategy: if the argument is a native string (http_get, etc.) we can
-    // call it directly. For user-defined closures, we execute them here on
-    // the main thread in a simulated "ready" task.
-    //
-    // Real async execution: we evaluate the callable and wrap the Result.
-
     match &args[0] {
         Value::Str(url) => {
-            // Convenience: treat a String as an HTTP GET URL
             let url = url.clone();
             let task = spawn_task(move || {
                 match ureq::get(&url).call() {
@@ -498,19 +482,12 @@ fn async_spawn(args: Vec<Value>) -> Result<Value, String> {
             Ok(task_to_value(task))
         }
         Value::Function(_) => {
-            // We cannot move a non-Send Value across threads.
-            // We execute the function synchronously and wrap in a "done" task.
-            // For true parallel execution, the user should use native async ops.
-            //
-            // This provides the async_await API surface even for user functions.
             Err("async_spawn with user-defined functions: use async_spawn_http(), async_spawn_exec(), or channel-based patterns instead. User closures cannot be moved across OS thread boundaries. See examples/async_demo.zph.".into())
         }
         _ => Err("async_spawn() requires a function or URL string".into())
     }
 }
 
-/// async_spawn_http(url: String) -> Task
-/// (internal, also exposed as part of async_spawn overloading)
 fn spawn_http_task(url: String) -> Task {
     spawn_task(move || {
         match ureq::get(&url).call() {
@@ -578,40 +555,12 @@ fn spawn_sleep_task(ms: u64) -> Task {
     })
 }
 
-/// async_await(task: Task) -> Result<Value, String>
-///
-/// Blocks until the given task completes, then returns its result.
-///
-/// Example:
-///   let t = async_http_get("https://api.example.com/data")
-///   let result = async_await(t)
-///   match result {
-///       Ok(body) => println(body)
-///       Err(e)   => println("Error: #{e}")
-///   }
 fn do_async_await(args: Vec<Value>) -> Result<Value, String> {
     let task_val = args.into_iter().next()
         .ok_or_else(|| "async_await(task) requires 1 argument".to_string())?;
     join_task_val(&task_val)
 }
 
-/// async_await_all(tasks: List<Task>) -> List<Result<Value>>
-///
-/// Awaits all tasks in the list concurrently and returns results in order.
-///
-/// Example:
-///   let tasks = [
-///       async_http_get("https://api.example.com/users"),
-///       async_http_get("https://api.example.com/posts"),
-///       async_http_get("https://api.example.com/tags"),
-///   ]
-///   let results = async_await_all(tasks)
-///   for result in results {
-///       match result {
-///           Ok(body) => println("Got #{body.len()} chars")
-///           Err(e)   => println("Failed: #{e}")
-///       }
-///   }
 fn async_await_all(args: Vec<Value>) -> Result<Value, String> {
     let list = match args.into_iter().next() {
         Some(Value::List(v)) => v,
@@ -628,17 +577,6 @@ fn async_await_all(args: Vec<Value>) -> Result<Value, String> {
     Ok(Value::List(Rc::new(RefCell::new(results))))
 }
 
-/// async_await_any(tasks: List<Task>) -> Result<Value, String>
-///
-/// Returns the result of the first task to complete.
-/// Other tasks continue running but their results are discarded.
-///
-/// Example:
-///   let tasks = [
-///       async_http_get("https://server1.example.com/data"),
-///       async_http_get("https://server2.example.com/data"),
-///   ]
-///   let fastest = async_await_any(tasks)
 fn async_await_any(args: Vec<Value>) -> Result<Value, String> {
     let list = match args.into_iter().next() {
         Some(Value::List(v)) => v,
@@ -650,7 +588,6 @@ fn async_await_any(args: Vec<Value>) -> Result<Value, String> {
         return Err("async_await_any: task list is empty".into());
     }
 
-    // Poll all tasks in a spin loop until one finishes
     loop {
         for task_val in &tasks {
             if let Some(id) = get_task_id(task_val) {
@@ -666,14 +603,6 @@ fn async_await_any(args: Vec<Value>) -> Result<Value, String> {
     }
 }
 
-/// async_sleep(ms: Int) -> Nil
-///
-/// Sleeps for the given number of milliseconds.
-/// Can be used inside async blocks to yield or introduce delays.
-///
-/// Example:
-///   async_sleep(500)  // sleep 500ms
-///   println("Half a second later...")
 fn async_sleep(args: Vec<Value>) -> Result<Value, String> {
     let ms = match args.get(0) {
         Some(Value::Int(n)) => *n as u64,
@@ -684,18 +613,6 @@ fn async_sleep(args: Vec<Value>) -> Result<Value, String> {
     Ok(Value::Nil)
 }
 
-/// async_timeout(task: Task, ms: Int) -> Result<Value, String>
-///
-/// Awaits a task with a time limit. Returns Err("timeout") if exceeded.
-///
-/// Example:
-///   let t = async_http_get("https://slow.example.com/data")
-///   let result = async_timeout(t, 5000)   // 5 second timeout
-///   match result {
-///       Ok(body)      => println(body)
-///       Err("timeout") => println("Request timed out")
-///       Err(e)        => println("Error: #{e}")
-///   }
 fn do_async_timeout(args: Vec<Value>) -> Result<Value, String> {
     if args.len() < 2 {
         return Err("async_timeout(task, ms) requires 2 arguments".into());
@@ -708,22 +625,6 @@ fn do_async_timeout(args: Vec<Value>) -> Result<Value, String> {
     join_task_timeout(&args[0], ms)
 }
 
-/// async_map(list: List, f: Fun) -> List<Task>
-///
-/// Maps a function over a list, spawning each call as an async HTTP GET task.
-/// The function must return a URL string to fetch.
-/// Returns a list of Tasks.
-///
-/// For arbitrary async mapping, spawn tasks manually with async_http_get().
-///
-/// Example:
-///   let urls = [
-///       "https://api.example.com/users/1",
-///       "https://api.example.com/users/2",
-///       "https://api.example.com/users/3",
-///   ]
-///   let tasks = async_map(urls, |url| => url)
-///   let results = async_await_all(tasks)
 fn async_map(args: Vec<Value>) -> Result<Value, String> {
     if args.len() < 2 {
         return Err("async_map(list, f) requires 2 arguments".into());
@@ -733,14 +634,11 @@ fn async_map(args: Vec<Value>) -> Result<Value, String> {
         _ => return Err("async_map: first argument must be a List".into()),
     };
 
-    // For each item, if it's a string, spawn an HTTP GET task.
-    // Otherwise, wrap the value in a completed task.
     let mut tasks = Vec::new();
     for item in list {
         let task = match item {
             Value::Str(url) => spawn_http_task(url),
             Value::Int(n) => {
-                let n = n;
                 spawn_task(move || Ok(SerializableValue::Int(n)))
             }
             other => {
@@ -753,18 +651,6 @@ fn async_map(args: Vec<Value>) -> Result<Value, String> {
     Ok(Value::List(Rc::new(RefCell::new(tasks))))
 }
 
-/// task_is_done(task: Task) -> Bool
-///
-/// Returns true if the task has finished executing.
-/// Non-blocking — useful for polling loops.
-///
-/// Example:
-///   let t = async_http_get("https://example.com")
-///   while !task_is_done(t) {
-///       println("Still waiting...")
-///       async_sleep(100)
-///   }
-///   let result = async_await(t)
 fn task_is_done(args: Vec<Value>) -> Result<Value, String> {
     let task_val = args.into_iter().next()
         .ok_or_else(|| "task_is_done(task) requires 1 argument".to_string())?;
@@ -780,17 +666,6 @@ fn task_is_done(args: Vec<Value>) -> Result<Value, String> {
 // Channel functions
 // ═══════════════════════════════════════════════════════════
 
-/// channel() -> Map { send: ..., recv: ..., try_recv: ..., channel_id: Int }
-///
-/// Creates an unbounded channel for passing values between parts of your program.
-/// The returned map has a channel_id that you pass to channel_send/recv/try_recv.
-///
-/// Example:
-///   let ch = channel()
-///   channel_send(ch, "hello")
-///   channel_send(ch, "world")
-///   let msg1 = channel_recv(ch)  // "hello"
-///   let msg2 = channel_recv(ch)  // "world"
 fn make_channel(_args: Vec<Value>, capacity: Option<usize>) -> Result<Value, String> {
     let id = new_channel_id();
     let ch = Rc::new(Channel::new(capacity));
@@ -800,18 +675,6 @@ fn make_channel(_args: Vec<Value>, capacity: Option<usize>) -> Result<Value, Str
     Ok(channel_to_value(id))
 }
 
-/// channel_send(ch: Channel, value: Value) -> Result<Nil, String>
-///
-/// Sends a value into the channel.
-/// For bounded channels, returns Err if the channel is at capacity.
-///
-/// Example:
-///   let ch = channel()
-///   let res = channel_send(ch, 42)
-///   match res {
-///       Ok(_)  => println("Sent!")
-///       Err(e) => println("Send failed: #{e}")
-///   }
 fn channel_send(args: Vec<Value>) -> Result<Value, String> {
     if args.len() < 2 {
         return Err("channel_send(ch, value) requires 2 arguments".into());
@@ -819,24 +682,21 @@ fn channel_send(args: Vec<Value>) -> Result<Value, String> {
     let id = get_channel_id(&args[0])
         .ok_or_else(|| "channel_send: first argument is not a Channel".to_string())?;
     let sv = value_to_serial(&args[1]);
-    CHANNEL_REGISTRY.with(|reg| {
+    let send_result = CHANNEL_REGISTRY.with(|reg| {
         let reg = reg.borrow();
         let ch = reg.get(&id)
             .ok_or_else(|| format!("channel_send: channel {} not found", id))?;
         ch.send(sv).map_err(|e| e.to_string())
-    })?;
-    Ok(Value::Result(std::result::Result::Ok(Box::new(Value::Nil))))
+    });
+    match send_result {
+        // Channel not found is a programmer error — propagate as runtime error
+        Err(e) if e.contains("not found") => Err(e),
+        // Capacity exceeded is a normal Zephyr Err the script can handle
+        Ok(_)  => Ok(Value::Result(std::result::Result::Ok(Box::new(Value::Nil)))),
+        Err(e) => Ok(Value::Result(std::result::Result::Err(Box::new(Value::Str(e))))),
+    }
 }
 
-/// channel_recv(ch: Channel) -> Value
-///
-/// Blocks until a value is available and returns it.
-///
-/// Example:
-///   let ch = channel()
-///   // (in another task/thread: channel_send(ch, "ping"))
-///   let msg = channel_recv(ch)
-///   println("Received: #{msg}")
 fn channel_recv(args: Vec<Value>) -> Result<Value, String> {
     let id = get_channel_id(args.get(0).unwrap_or(&Value::Nil))
         .ok_or_else(|| "channel_recv: argument is not a Channel".to_string())?;
@@ -849,18 +709,6 @@ fn channel_recv(args: Vec<Value>) -> Result<Value, String> {
     Ok(serial_to_value(sv))
 }
 
-/// channel_try_recv(ch: Channel) -> Result<Value, Nil>
-///
-/// Non-blocking receive. Returns Ok(value) if a message is available,
-/// or Err(nil) if the channel is empty.
-///
-/// Example:
-///   let ch = channel()
-///   let res = channel_try_recv(ch)
-///   match res {
-///       Ok(msg) => println("Got: #{msg}")
-///       Err(_)  => println("No messages yet")
-///   }
 fn channel_try_recv(args: Vec<Value>) -> Result<Value, String> {
     let id = get_channel_id(args.get(0).unwrap_or(&Value::Nil))
         .ok_or_else(|| "channel_try_recv: argument is not a Channel".to_string())?;
