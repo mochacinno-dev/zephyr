@@ -610,6 +610,12 @@ impl Parser {
                 // Map literal or block — heuristic: if first token is a string/ident followed by colon → map
                 self.advance();
                 self.skip_newlines();
+
+                if self.check(&Token::RBrace) {
+                    self.advance();
+                    return Ok(Expr::MapLit(vec![]));
+                }
+                
                 // Check for map literal: could start with expr: expr
                 // We parse it as a block unless we detect key: value pattern
                 let mut stmts = Vec::new();

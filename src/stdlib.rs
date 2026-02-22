@@ -5,6 +5,10 @@
 use std::rc::Rc;
 use std::cell::RefCell;
 use crate::interpreter::{Value, Env, ZephyrFn};
+use crate::net;
+use crate::json;
+use crate::process;
+use crate::zfs as fs;
 
 pub fn register(env: &Env) {
     let natives = [
@@ -28,6 +32,18 @@ pub fn register(env: &Env) {
         "assert", "panic", "exit",
     ];
     for name in natives {
+        env.define(name, Value::Function(ZephyrFn::Native(name.to_string())));
+    }
+    for name in net::net_functions() {
+        env.define(name, Value::Function(ZephyrFn::Native(name.to_string())));
+    }
+    for name in json::json_functions() {
+        env.define(name, Value::Function(ZephyrFn::Native(name.to_string())));
+    }
+    for name in process::process_functions() {
+        env.define(name, Value::Function(ZephyrFn::Native(name.to_string())));
+    }
+    for name in fs::fs_functions() {
         env.define(name, Value::Function(ZephyrFn::Native(name.to_string())));
     }
 }
@@ -331,6 +347,23 @@ pub fn call_native(name: &str, args: Vec<Value>, _env: &Env) -> Result<Value, St
             std::process::exit(code as i32);
         }
 
+        // ── Net ───────────────────────────────────────────────────────────────
+        name if net::net_functions().contains(&name) => {
+            net::call_net(name, args).map_err(|e| e)
+        }
+
+        // ── JSON ──────────────────────────────────────────────────────────────
+        name if json::json_functions().contains(&name) => {
+            json::call_json(name, args).map_err(|e| e)
+        }
+        // ── Process ───────────────────────────────────────────────────────────
+        name if process::process_functions().contains(&name) => {
+            process::call_process(name, args).map_err(|e| e)
+        }
+        // ── File System ───────────────────────────────────────────────────────
+        name if fs::fs_functions().contains(&name) => {
+            fs::call_fs(name, args).map_err(|e| e)
+        }
         _ => Err(format!("Unknown native function '{}'", name))
     }
 }

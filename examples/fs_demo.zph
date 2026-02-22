@@ -1,0 +1,403 @@
+// ═══════════════════════════════════════════════════════════
+//  fs_demo.zph — Zephyr File System stdlib demo
+// ═══════════════════════════════════════════════════════════
+
+let tmp = "/tmp/zephyr_fs_demo"
+dir_create(tmp)
+
+
+// ── 1. file_write / file_read ────────────────────────────────────────────────
+
+println("── FILE WRITE / READ ───────────────────")
+
+let hello_path = path_join(tmp, "hello.txt")
+let write_res  = file_write(hello_path, "Hello, Zephyr!\nLine two.\nLine three.\n")
+match write_res {
+    Ok(_)  => println("Written: #{hello_path}")
+    Err(e) => println("Write error: #{e}")
+}
+
+let read_res = file_read(hello_path)
+match read_res {
+    Ok(contents) => println("Contents:\n#{contents}")
+    Err(e)       => println("Read error: #{e}")
+}
+
+
+// ── 2. file_read_lines ───────────────────────────────────────────────────────
+
+println("── READ LINES ──────────────────────────")
+
+let lines_res = file_read_lines(hello_path)
+match lines_res {
+    Ok(lines) => {
+        println("Line count: #{lines.len()}")
+        for line in lines {
+            println("  > #{line}")
+        }
+    }
+    Err(e) => println(e)
+}
+
+
+// ── 3. file_append ───────────────────────────────────────────────────────────
+
+println("── FILE APPEND ─────────────────────────")
+
+file_append(hello_path, "Appended line one.\n")
+file_append(hello_path, "Appended line two.\n")
+
+let after_append = file_read(hello_path)
+match after_append {
+    Ok(s) => println("After append:\n#{s}")
+    Err(e) => println(e)
+}
+
+
+// ── 4. file_write_lines ──────────────────────────────────────────────────────
+
+println("── WRITE LINES ─────────────────────────")
+
+let csv_path = path_join(tmp, "data.csv")
+let csv_lines = ["name,age,city", "Alice,30,Berlin", "Bob,25,Tokyo", "Charlie,35,Paris"]
+let wl_res = file_write_lines(csv_path, csv_lines)
+match wl_res {
+    Ok(_)  => println("CSV written")
+    Err(e) => println(e)
+}
+
+let csv_check = file_read(csv_path)
+match csv_check {
+    Ok(s) => println("CSV:\n#{s}")
+    Err(e) => println(e)
+}
+
+
+// ── 5. JSON file read / write ─────────────────────────────────────────────────
+
+println("── JSON FILES ──────────────────────────")
+
+var config = {}
+config["host"]    = "localhost"
+config["port"]    = 8080
+config["debug"]   = true
+config["version"] = "1.0.0"
+
+let config_path = path_join(tmp, "config.json")
+let wj_res = file_write_json_pretty(config_path, config)
+match wj_res {
+    Ok(_)  => println("Config written")
+    Err(e) => println("Write error: #{e}")
+}
+
+let rj_res = file_read_json(config_path)
+match rj_res {
+    Ok(data) => {
+        let host    = json_get(data, "host")
+        let port    = json_get(data, "port")
+        let debug   = json_get(data, "debug")
+        println("Loaded config — host=#{host} port=#{port} debug=#{debug}")
+    }
+    Err(e) => println("JSON read error: #{e}")
+}
+
+// Verify the pretty-printed file looks right
+let raw_json = file_read(config_path)
+match raw_json {
+    Ok(s) => println("Pretty JSON on disk:\n#{s}")
+    Err(e) => println(e)
+}
+
+
+// ── 6. file_exists / file_size / file_modified ───────────────────────────────
+
+println("── FILE INFO ───────────────────────────")
+
+println("hello.txt exists: #{file_exists(hello_path)}")
+let ghost_path   = path_join(tmp, "ghost.txt")
+let ghost_exists = file_exists(ghost_path)
+println("ghost.txt exists: #{ghost_exists}")
+
+let sz = file_size(hello_path)
+match sz {
+    Ok(n)  => println("hello.txt size: #{n} bytes")
+    Err(e) => println(e)
+}
+
+let mod_time = file_modified(hello_path)
+match mod_time {
+    Ok(ts) => println("Last modified: #{ts} (unix)")
+    Err(e) => println(e)
+}
+
+
+// ── 7. file_ext / file_name / file_stem / file_parent ────────────────────────
+
+println("── PATH COMPONENTS ─────────────────────")
+
+let sample = "/home/alice/projects/demo.tar.gz"
+println("path:   #{sample}")
+println("name:   #{file_name(sample)}")
+println("stem:   #{file_stem(sample)}")
+println("ext:    #{file_ext(sample)}")
+println("parent: #{path_parent(sample)}")
+
+let no_ext = "/usr/bin/zephyr"
+println("no-ext stem: #{file_stem(no_ext)}")
+println("no-ext ext:  #{file_ext(no_ext)}")
+
+
+// ── 8. file_copy / file_move / file_delete ───────────────────────────────────
+
+println("── FILE OPS ────────────────────────────")
+
+let copy_src = hello_path
+let copy_dst = path_join(tmp, "hello_copy.txt")
+let cp_res   = file_copy(copy_src, copy_dst)
+match cp_res {
+    Ok(_)  => println("Copied to #{copy_dst}")
+    Err(e) => println("Copy failed: #{e}")
+}
+
+println("Copy exists: #{file_exists(copy_dst)}")
+
+let moved_path = path_join(tmp, "hello_moved.txt")
+let mv_res = file_move(copy_dst, moved_path)
+match mv_res {
+    Ok(_)  => println("Moved to #{moved_path}")
+    Err(e) => println("Move failed: #{e}")
+}
+
+println("Moved exists: #{file_exists(moved_path)}")
+println("Src gone:     #{file_exists(copy_dst)}")
+
+let del_res = file_delete(moved_path)
+match del_res {
+    Ok(_)  => println("Deleted #{moved_path}")
+    Err(e) => println("Delete failed: #{e}")
+}
+println("After delete: #{file_exists(moved_path)}")
+
+
+// ── 9. Directory operations ───────────────────────────────────────────────────
+
+println("── DIRECTORY OPS ───────────────────────")
+
+let sub_dir = path_join(tmp, "subdir/nested/deep")
+let dc_res  = dir_create(sub_dir)
+match dc_res {
+    Ok(_)  => println("Created: #{sub_dir}")
+    Err(e) => println("mkdir failed: #{e}")
+}
+
+println("dir_exists: #{dir_exists(sub_dir)}")
+println("file_exists on dir: #{file_exists(sub_dir)}")
+
+// Write a file inside
+file_write(path_join(sub_dir, "note.txt"), "deep note")
+
+// dir_list
+let list_res = dir_list(tmp)
+match list_res {
+    Ok(entries) => {
+        println("Entries in #{tmp}:")
+        for e in entries {
+            println("  #{e}")
+        }
+    }
+    Err(e) => println(e)
+}
+
+
+// ── 10. dir_list_info ────────────────────────────────────────────────────────
+
+println("── DIR LIST INFO ───────────────────────")
+
+let info_res = dir_list_info(tmp)
+match info_res {
+    Ok(items) => {
+        println("Detailed listing of #{tmp}:")
+        for item in items {
+            let name    = item["name"]
+            let is_dir  = item["is_dir"]
+            let size    = item["size"]
+            let kind    = if is_dir { "dir" } else { "file" }
+            println("  [#{kind}] #{name} (#{size} bytes)")
+        }
+    }
+    Err(e) => println(e)
+}
+
+
+// ── 11. dir_list_full ────────────────────────────────────────────────────────
+
+println("── DIR LIST FULL ───────────────────────")
+
+let full_res = dir_list_full(tmp)
+match full_res {
+    Ok(paths) => {
+        println("Full paths:")
+        for p in paths {
+            println("  #{p}")
+        }
+    }
+    Err(e) => println(e)
+}
+
+
+// ── 12. dir_copy / dir_delete_all ────────────────────────────────────────────
+
+println("── DIR COPY / DELETE ALL ───────────────")
+
+let copy_dest = path_join(tmp, "subdir_backup")
+let dcp_res   = dir_copy(path_join(tmp, "subdir"), copy_dest)
+match dcp_res {
+    Ok(_)  => println("Dir copied to #{copy_dest}")
+    Err(e) => println("dir_copy failed: #{e}")
+}
+
+println("Backup exists: #{dir_exists(copy_dest)}")
+
+let dda_res = dir_delete_all(copy_dest)
+match dda_res {
+    Ok(_)  => println("Deleted #{copy_dest}")
+    Err(e) => println("dir_delete_all failed: #{e}")
+}
+
+println("After delete: #{dir_exists(copy_dest)}")
+
+
+// ── 13. Path utilities ────────────────────────────────────────────────────────
+
+println("── PATH UTILS ──────────────────────────")
+
+let joined_path = path_join("/home/user", "docs/file.txt")
+println("path_join:   #{joined_path}")
+println("path_exists: #{path_exists(tmp)}")
+println("path_is_dir: #{path_is_dir(tmp)}")
+println("path_is_file:#{path_is_file(hello_path)}")
+
+let abs_res = path_abs(".")
+match abs_res {
+    Ok(p)  => println("path_abs(.): #{p}")
+    Err(e) => println(e)
+}
+
+let home = path_expand("~")
+println("home: #{home}")
+
+let expanded = path_expand("~/.config/zephyr/init.zph")
+println("expanded: #{expanded}")
+
+
+// ── 14. Temp files ────────────────────────────────────────────────────────────
+
+println("── TEMP FILES ──────────────────────────")
+
+let tf_res = temp_file("zephyr_demo_")
+match tf_res {
+    Ok(tf_path) => {
+        println("Temp file: #{tf_path}")
+        file_write(tf_path, "temporary content")
+        let tf_read = file_read(tf_path)
+        match tf_read {
+            Ok(s)  => println("Temp content: #{s}")
+            Err(e) => println(e)
+        }
+        file_delete(tf_path)
+        println("Temp file cleaned up: #{!file_exists(tf_path)}")
+    }
+    Err(e) => println(e)
+}
+
+let td_res = temp_dir("zephyr_demo_")
+match td_res {
+    Ok(td_path) => {
+        println("Temp dir: #{td_path}")
+        file_write(path_join(td_path, "a.txt"), "a")
+        file_write(path_join(td_path, "b.txt"), "b")
+        let td_list = dir_list(td_path)
+        match td_list {
+            Ok(items) => println("Temp dir has #{items.len()} files")
+            Err(e)    => println(e)
+        }
+        dir_delete_all(td_path)
+        println("Temp dir cleaned up: #{!dir_exists(td_path)}")
+    }
+    Err(e) => println(e)
+}
+
+
+// ── 15. Real-world pattern: config file management ───────────────────────────
+
+println("── CONFIG FILE PATTERN ─────────────────")
+
+fun load_config(path: String) -> Bool {
+    if !file_exists(path) {
+        println("Config not found, writing defaults to #{path}")
+        var defaults = {}
+        defaults["theme"]  = "dark"
+        defaults["indent"] = 4
+        defaults["wrap"]   = 80
+        let res = file_write_json_pretty(path, defaults)
+        match res {
+            Ok(_)  => true
+            Err(e) => {
+                println("Could not write defaults: #{e}")
+                false
+            }
+        }
+    } else {
+        println("Loaded config from #{path}")
+        true
+    }
+}
+
+fun update_config(path: String, key: String, val: String) -> Bool {
+    let loaded = file_read_json(path)
+    match loaded {
+        Err(e) => {
+            println("Could not read config: #{e}")
+            false
+        }
+        Ok(data) => {
+            let updated = json_set(data, key, val)
+            let saved   = file_write_json_pretty(path, updated)
+            match saved {
+                Ok(_)  => true
+                Err(e) => {
+                    println("Could not save config: #{e}")
+                    false
+                }
+            }
+        }
+    }
+}
+
+let conf_path = path_join(tmp, "app_config.json")
+
+load_config(conf_path)
+update_config(conf_path, "theme", "light")
+load_config(conf_path)   // second call — should say "Loaded"
+
+let final_conf = file_read_json(conf_path)
+match final_conf {
+    Ok(data) => {
+        let theme  = json_get(data, "theme")
+        let indent = json_get(data, "indent")
+        println("Final config — theme=#{theme} indent=#{indent}")
+    }
+    Err(e) => println(e)
+}
+
+
+// ── Cleanup ───────────────────────────────────────────────────────────────────
+
+println("── CLEANUP ─────────────────────────────")
+let cleanup = dir_delete_all(tmp)
+match cleanup {
+    Ok(_)  => println("Cleaned up #{tmp}")
+    Err(e) => println("Cleanup error: #{e}")
+}
+println("")
+println("FS demo complete!")

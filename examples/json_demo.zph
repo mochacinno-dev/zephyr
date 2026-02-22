@@ -1,0 +1,288 @@
+// ═══════════════════════════════════════════════════════════
+//  json_demo.zph — Zephyr JSON standard library demo
+// ═══════════════════════════════════════════════════════════
+
+
+// ── 1. Parsing a simple object ───────────────────────────────────────────────
+
+println("── PARSE OBJECT ────────────────────────")
+
+let raw = "{\"name\": \"Alice\", \"age\": 30, \"active\": true, \"score\": 98.5}"
+
+let result = json_parse(raw)
+match result {
+    Ok(data) => {
+        let name   = json_get(data, "name")
+        let age    = json_get(data, "age")
+        let active = json_get(data, "active")
+        let score  = json_get(data, "score")
+        println("Name:   #{name}")
+        println("Age:    #{age}")
+        println("Active: #{active}")
+        println("Score:  #{score}")
+    }
+    Err(e) => println("Parse error: #{e}")
+}
+
+
+// ── 2. Parsing an array ──────────────────────────────────────────────────────
+
+println("── PARSE ARRAY ─────────────────────────")
+
+let arr_raw = "[1, 2, 3, \"four\", true, null]"
+let arr_result = json_parse(arr_raw)
+match arr_result {
+    Ok(arr) => {
+        let length = json_len(arr)
+        match length {
+            Ok(n) => println("Array has #{n} items")
+            Err(e) => println(e)
+        }
+        println("Is array: #{json_is_array(arr)}")
+        println("Array: #{arr}")
+    }
+    Err(e) => println("Error: #{e}")
+}
+
+
+// ── 3. Nested object access ──────────────────────────────────────────────────
+
+println("── NESTED ACCESS ───────────────────────")
+
+let nested_raw = "{\"user\": {\"id\": 42, \"address\": {\"city\": \"Berlin\", \"zip\": \"10115\"}}, \"tags\": [\"rust\", \"zephyr\", \"dev\"]}"
+
+let nested = json_parse(nested_raw)
+match nested {
+    Ok(data) => {
+        // Dot-path access
+        let city = json_get_path(data, "user.address.city")
+        let zip  = json_get_path(data, "user.address.zip")
+        let id   = json_get_path(data, "user.id")
+        let tag0 = json_get_path(data, "tags.0")
+        let tag1 = json_get_path(data, "tags.1")
+
+        println("City:     #{city}")
+        println("Zip:      #{zip}")
+        println("User ID:  #{id}")
+        println("Tag 0:    #{tag0}")
+        println("Tag 1:    #{tag1}")
+
+        // Missing path returns nil
+        let missing = json_get_path(data, "user.phone.number")
+        println("Missing:  #{missing}")
+    }
+    Err(e) => println("Error: #{e}")
+}
+
+
+// ── 4. Type checks ───────────────────────────────────────────────────────────
+
+println("── TYPE CHECKS ─────────────────────────")
+
+let mixed_raw = "{\"id\": 1, \"name\": \"Bob\", \"score\": 7.5, \"active\": false, \"notes\": null}"
+let mixed = json_parse(mixed_raw)
+match mixed {
+    Ok(data) => {
+        let id_val     = json_get(data, "id")
+        let name_val   = json_get(data, "name")
+        let score_val  = json_get(data, "score")
+        let active_val = json_get(data, "active")
+        let notes_val  = json_get(data, "notes")
+
+        println("id is number: #{json_is_number(id_val)}")
+        println("name is string: #{json_is_string(name_val)}")
+        println("score is number: #{json_is_number(score_val)}")
+        println("active is bool: #{json_is_bool(active_val)}")
+        println("notes is null: #{json_is_null(notes_val)}")
+        println("data is object: #{json_is_object(data)}")
+    }
+    Err(e) => println("Error: #{e}")
+}
+
+
+// ── 5. Stringify ─────────────────────────────────────────────────────────────
+
+println("── STRINGIFY ───────────────────────────")
+
+// Build a map with {} and set values via index
+var person = {}
+person["name"]   = "Charlie"
+person["age"]    = 25
+person["active"] = true
+person["score"]  = 99.9
+person["tags"]   = ["zephyr", "dev"]
+
+let compact = json_stringify(person)
+match compact {
+    Ok(s) => println("Compact: #{s}")
+    Err(e) => println("Error: #{e}")
+}
+
+let pretty = json_pretty(person)
+match pretty {
+    Ok(s) => println("Pretty:\n#{s}")
+    Err(e) => println("Error: #{e}")
+}
+
+
+// ── 6. json_set — immutable update ───────────────────────────────────────────
+
+println("── JSON SET ────────────────────────────")
+
+let base_raw  = "{\"name\": \"Dave\", \"age\": 20}"
+let base_data = json_parse(base_raw)
+match base_data {
+    Ok(obj) => {
+        let updated = json_set(obj, "age", 21)
+        let updated2 = json_set(updated, "city", "Tokyo")
+
+        let s1 = json_stringify(obj)
+        let s2 = json_stringify(updated2)
+        match s1 {
+            Ok(s) => println("Original: #{s}")
+            Err(e) => println(e)
+        }
+        match s2 {
+            Ok(s) => println("Updated:  #{s}")
+            Err(e) => println(e)
+        }
+    }
+    Err(e) => println("Error: #{e}")
+}
+
+
+// ── 7. json_keys / json_has ───────────────────────────────────────────────────
+
+println("── KEYS AND HAS ────────────────────────")
+
+let obj_raw = "{\"x\": 1, \"y\": 2, \"z\": 3}"
+let obj = json_parse(obj_raw)
+match obj {
+    Ok(data) => {
+        let keys = json_keys(data)
+        match keys {
+            Ok(ks) => {
+                println("Keys:")
+                for k in ks {
+                    println("  #{k}")
+                }
+            }
+            Err(e) => println(e)
+        }
+        let has_x = json_has(data, "x")
+        let has_w = json_has(data, "w")
+        println("Has x: #{has_x}")
+        println("Has w: #{has_w}")
+    }
+    Err(e) => println("Error: #{e}")
+}
+
+
+// ── 8. Handling a JSON API response ──────────────────────────────────────────
+
+println("── API RESPONSE PATTERN ────────────────")
+
+fun handle_api_response(json_str: String) {
+    let parsed = json_parse(json_str)
+    match parsed {
+        Err(e) => {
+            println("Invalid JSON: #{e}")
+            return
+        }
+        Ok(data) => {
+            // Check for API-level error envelope
+            if json_has(data, "error") {
+                let err_msg = json_get(data, "error")
+                println("API error: #{err_msg}")
+                return
+            }
+
+            // Extract pagination info
+            let total = json_get_path(data, "meta.total")
+            let page  = json_get_path(data, "meta.page")
+            println("Page #{page} of #{total} total results")
+
+            // Iterate items
+            let items = json_get(data, "items")
+            if json_is_array(items) {
+                let count = json_len(items)
+                match count {
+                    Ok(n) => {
+                        println("Got #{n} items:")
+                        for i in 0..n {
+                            let item = json_get_path(items, "#{i}.name")
+                            let score_val = json_get_path(items, "#{i}.score")
+                            println("  - #{item} (score: #{score_val})")
+                        }
+                    }
+                    Err(e) => println(e)
+                }
+            }
+        }
+    }
+}
+
+let api_response = "{\"meta\": {\"total\": 3, \"page\": 1}, \"items\": [{\"name\": \"Alpha\", \"score\": 95}, {\"name\": \"Beta\", \"score\": 87}, {\"name\": \"Gamma\", \"score\": 76}]}"
+let error_response = "{\"error\": \"Unauthorized\", \"code\": 401}"
+let bad_json = "{this is not valid json"
+
+handle_api_response(api_response)
+println("---")
+handle_api_response(error_response)
+println("---")
+handle_api_response(bad_json)
+
+
+// ── 9. Serialize structs and nested values ───────────────────────────────────
+
+println("── SERIALIZE STRUCTS ───────────────────")
+
+struct Point {
+    pub x: Float
+    pub y: Float
+}
+
+let p = Point { x: 3.0, y: 4.5 }
+let p_json = json_stringify(p)
+match p_json {
+    Ok(s) => println("Point JSON: #{s}")
+    Err(e) => println(e)
+}
+
+// Nested list of maps
+var row1 = {}
+row1["id"]   = 1
+row1["label"] = "first"
+var row2 = {}
+row2["id"]   = 2
+row2["label"] = "second"
+
+let table = [row1, row2]
+let table_json = json_pretty(table)
+match table_json {
+    Ok(s) => println("Table:\n#{s}")
+    Err(e) => println(e)
+}
+
+
+// ── 10. Round-trip test ──────────────────────────────────────────────────────
+
+println("── ROUND TRIP ──────────────────────────")
+
+let original = "{\"a\": 1, \"b\": [true, false, null], \"c\": {\"d\": \"hello\"}}"
+
+let parsed = json_parse(original)
+match parsed {
+    Ok(data) => {
+        let restringified = json_stringify(data)
+        match restringified {
+            Ok(s) => println("Round-trip OK: #{s}")
+            Err(e) => println("Stringify error: #{e}")
+        }
+    }
+    Err(e) => println("Parse error: #{e}")
+}
+
+
+println("")
+println("JSON demo complete!")

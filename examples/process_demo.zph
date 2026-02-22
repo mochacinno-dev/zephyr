@@ -1,0 +1,319 @@
+// ═══════════════════════════════════════════════════════════
+//  process_demo.zph — Zephyr Process / Shell stdlib demo
+// ═══════════════════════════════════════════════════════════
+
+
+// ── 1. exec() — simple shell command ─────────────────────────────────────────
+
+println("── EXEC ────────────────────────────────")
+
+let files = exec("ls -la")
+match files {
+    Ok(out) => println(out)
+    Err(e)  => println("Error: #{e}")
+}
+
+// Pipes work — exec runs via /bin/sh
+let line_count = exec("ls | wc -l")
+match line_count {
+    Ok(n)  => println("Files in dir: #{n}")
+    Err(e) => println(e)
+}
+
+// Failed command puts stderr in Err
+let bad = exec("cat /this/does/not/exist")
+match bad {
+    Ok(out) => println(out)
+    Err(e)  => println("Expected error: #{e}")
+}
+
+
+// ── 2. exec_out() — always returns map ───────────────────────────────────────
+
+println("── EXEC_OUT ────────────────────────────")
+
+let res = exec_out("git --version")
+let git_stdout = res["stdout"]
+let git_code   = res["code"]
+let git_ok     = res["ok"]
+println("stdout: #{git_stdout}")
+println("code:   #{git_code}")
+println("ok:     #{git_ok}")
+
+// Get stderr on failure
+let fail = exec_out("ls /nonexistent")
+let fail_stderr = fail["stderr"]
+let fail_code   = fail["code"]
+println("stderr: #{fail_stderr}")
+println("code:   #{fail_code}")
+
+
+// ── 3. exec_status() and exec_ok() ───────────────────────────────────────────
+
+println("── EXEC_STATUS / EXEC_OK ───────────────")
+
+let code = exec_status("true")
+println("true exit code: #{code}")
+
+let fail_code2 = exec_status("false")
+println("false exit code: #{fail_code2}")
+
+// exec_ok is great for checking tool availability
+if exec_ok("which git") {
+    println("git is installed")
+} else {
+    println("git not found")
+}
+
+if exec_ok("which zsh") {
+    println("zsh is available")
+} else {
+    println("zsh not found")
+}
+
+// Check if a file exists
+if exec_ok("test -f /etc/hostname") {
+    let hostname = exec("/etc/hostname")
+    match hostname {
+        Ok(h)  => println("hostname file exists")
+        Err(e) => println(e)
+    }
+}
+
+
+// ── 4. shell() — explicit args, no injection risk ────────────────────────────
+
+println("── SHELL ───────────────────────────────")
+
+// Safe even with untrusted input — no shell metachar processing
+let user_input = "my package; rm -rf /"   // would be dangerous in exec()
+let safe = shell("echo", [user_input])
+let safe_out = safe["stdout"]
+println("Safe echo: #{safe_out}")          // prints literally: my package; rm -rf /
+
+// git with explicit args
+let git_log = shell("git", ["log", "--oneline", "-3"])
+let git_log_ok = git_log["ok"]
+if git_log_ok {
+    let git_log_out = git_log["stdout"]
+    println("Recent commits:\n#{git_log_out}")
+} else {
+    let git_log_err = git_log["stderr"]
+    println("Not a git repo: #{git_log_err}")
+}
+
+
+// ── 5. process_run() — full control ──────────────────────────────────────────
+
+println("── PROCESS_RUN ─────────────────────────")
+
+// Custom environment variables
+var build_env = {}
+build_env["LANG"]  = "en_US.UTF-8"
+build_env["TERM"]  = "xterm-256color"
+
+let env_res = process_run("env", [], build_env, "")
+let env_ok  = env_res["ok"]
+if env_ok {
+    // Just show a couple lines
+    let env_out = env_res["stdout"]
+    let first_lines = exec("echo '#{env_out}' | head -3")
+    match first_lines {
+        Ok(lines) => println("Env sample:\n#{lines}")
+        Err(_)    => println("(env output captured)")
+    }
+}
+
+// Run in a specific working directory
+let tmp_ls = process_run("ls", ["-la"], [], "/tmp")
+let tmp_ok  = tmp_ls["ok"]
+if tmp_ok {
+    println("Listed /tmp successfully")
+}
+
+
+// ── 6. process_spawn() — streaming output ────────────────────────────────────
+
+println("── PROCESS_SPAWN ───────────────────────")
+
+// process_spawn streams directly to the terminal in real time.
+// Output appears as it happens, not captured into a string.
+// Great for: makepkg, pacman, cargo build, long downloads, etc.
+
+println("Running a streamed command (you will see output in real time):")
+let spawn_result = process_spawn("echo line1 && echo line2 && echo line3")
+match spawn_result {
+    Ok(code) => println("Spawned process exited with code: #{code}")
+    Err(e)   => println("Could not spawn: #{e}")
+}
+
+
+// ── 7. Environment variables ──────────────────────────────────────────────────
+
+println("── ENVIRONMENT ─────────────────────────")
+
+let home    = env_get("HOME")
+let shell   = env_get("SHELL")
+let editor  = env_get("EDITOR")
+let missing = env_get("THIS_VAR_DOES_NOT_EXIST_XYZ")
+
+println("HOME:    #{home}")
+println("SHELL:   #{shell}")
+println("EDITOR:  #{editor}")
+println("Missing: #{missing}")
+
+// Set an env var — visible to child processes spawned after this
+env_set("ZEPHYR_TEST", "hello from zephyr")
+let verify = env_get("ZEPHYR_TEST")
+println("After set: #{verify}")
+
+// Get all env vars
+let all_env = env_all()
+let path_val = all_env["PATH"]
+println("PATH (first 60 chars): #{path_val}")
+
+
+// ── 8. Working directory ──────────────────────────────────────────────────────
+
+println("── WORKING DIRECTORY ───────────────────")
+
+let original_dir = cwd()
+println("Current dir: #{original_dir}")
+
+let cd_res = set_cwd("/tmp")
+match cd_res {
+    Ok(_)  => {
+        let new_dir = cwd()
+        println("Changed to: #{new_dir}")
+    }
+    Err(e) => println("set_cwd failed: #{e}")
+}
+
+// Change back
+let restore = set_cwd(original_dir)
+match restore {
+    Ok(_)  => println("Restored to: #{cwd()}")
+    Err(e) => println("Could not restore: #{e}")
+}
+
+// Try to change to a nonexistent directory
+let bad_cd = set_cwd("/this/path/does/not/exist")
+match bad_cd {
+    Ok(_)  => println("Unexpected success")
+    Err(e) => println("Expected error: #{e}")
+}
+
+
+// ── 9. Real-world pattern: AUR helper skeleton ────────────────────────────────
+
+println("── AUR HELPER SKELETON ─────────────────")
+
+fun is_installed(pkg: String) -> Bool {
+    exec_ok("pacman -Qi #{pkg}")
+}
+
+fun aur_clone(pkg: String, dest: String) -> Bool {
+    let url = "https://aur.archlinux.org/#{pkg}.git"
+    let res = shell("git", ["clone", "--depth", "1", url, dest])
+    let ok  = res["ok"]
+    if !ok {
+        let err = res["stderr"]
+        println("Clone failed: #{err}")
+    }
+    ok
+}
+
+fun build_package(src_dir: String) -> Bool {
+    println("Building in #{src_dir}...")
+    // process_spawn so the user sees makepkg output live
+    let result = process_spawn("cd '#{src_dir}' && makepkg --noconfirm --needed")
+    match result {
+        Ok(0) => true
+        Ok(n) => {
+            println("makepkg exited #{n}")
+            false
+        }
+        Err(e) => {
+            println("Could not run makepkg: #{e}")
+            false
+        }
+    }
+}
+
+fun get_git_version(repo_dir: String) -> String {
+    let res = process_run("git", ["describe", "--tags", "--always"], [], repo_dir)
+    let ok  = res["ok"]
+    if ok {
+        res["stdout"]
+    } else {
+        "unknown"
+    }
+}
+
+// Demo the helper functions (won't actually build anything)
+println("Checking if base-devel is installed...")
+if is_installed("base-devel") {
+    println("base-devel: installed")
+} else {
+    println("base-devel: not installed")
+}
+
+let ver = get_git_version(".")
+println("This repo version: #{ver}")
+
+
+// ── 10. Command chaining with match ──────────────────────────────────────────
+
+println("── COMMAND CHAINING ────────────────────")
+
+fun ensure_dir(path: String) -> Bool {
+    if exec_ok("test -d #{path}") {
+        true
+    } else {
+        let res = exec("mkdir -p #{path}")
+        match res {
+            Ok(_)  => true
+            Err(e) => {
+                println("mkdir failed: #{e}")
+                false
+            }
+        }
+    }
+}
+
+fun read_file(path: String) -> String {
+    let res = exec("cat #{path}")
+    match res {
+        Ok(contents) => contents
+        Err(_)       => ""
+    }
+}
+
+fun write_file(path: String, contents: String) -> Bool {
+    // Use printf to avoid issues with special chars vs echo
+    let res = shell("tee", [path])
+    // For simple cases, exec works fine:
+    let res2 = exec("printf '%s' '#{contents}' > #{path}")
+    match res2 {
+        Ok(_)  => true
+        Err(e) => {
+            println("write failed: #{e}")
+            false
+        }
+    }
+}
+
+// Test the helpers
+let dir_ok = ensure_dir("/tmp/zephyr_test")
+println("ensure_dir /tmp/zephyr_test: #{dir_ok}")
+
+let hostname_content = read_file("/etc/hostname")
+if hostname_content == "" {
+    println("Could not read /etc/hostname")
+} else {
+    println("Hostname: #{hostname_content}")
+}
+
+
+println("")
+println("Process demo complete!")

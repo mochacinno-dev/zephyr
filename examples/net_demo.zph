@@ -1,0 +1,199 @@
+// ═══════════════════════════════════════════════════════════
+//  net_demo.zph — Zephyr HTTP / Net standard library demo
+// ═══════════════════════════════════════════════════════════
+
+
+// ── 1. Simple GET request ────────────────────────────────────────────────────
+
+println("── HTTP GET ────────────────────────────")
+
+let res = http_get("https://httpbin.org/get")
+match res {
+    Ok(body) => println("GET succeeded, body length: #{body.len()}")
+    Err(e)   => println("GET failed: #{e}")
+}
+
+
+// ── 2. GET JSON ──────────────────────────────────────────────────────────────
+
+println("── HTTP GET JSON ───────────────────────")
+
+let json_res = http_get_json("https://jsonplaceholder.typicode.com/todos/1")
+match json_res {
+    Ok(json) => println("JSON response:\n#{json}")
+    Err(e)   => println("Error: #{e}")
+}
+
+
+// ── 3. POST plain text ───────────────────────────────────────────────────────
+
+println("── HTTP POST ───────────────────────────")
+
+let post_res = http_post("https://httpbin.org/post", "hello=world&name=Zephyr")
+match post_res {
+    Ok(body) => println("POST succeeded")
+    Err(e)   => println("POST failed: #{e}")
+}
+
+
+// ── 4. POST JSON ─────────────────────────────────────────────────────────────
+
+println("── HTTP POST JSON ──────────────────────")
+
+let payload = "{\"title\": \"Zephyr rocks\", \"userId\": 1}"
+let post_json_res = http_post_json("https://jsonplaceholder.typicode.com/posts", payload)
+match post_json_res {
+    Ok(body) => println("Created resource: #{body}")
+    Err(e)   => println("Error: #{e}")
+}
+
+
+// ── 5. HTTP status check ─────────────────────────────────────────────────────
+
+println("── HTTP STATUS ─────────────────────────")
+
+let status = http_status("https://httpbin.org/status/200")
+match status {
+    Ok(200) => println("Site is up! (200 OK)")
+    Ok(n)   => println("Unexpected status: #{n}")
+    Err(e)  => println("Could not reach site: #{e}")
+}
+
+let bad_status = http_status("https://httpbin.org/status/404")
+match bad_status {
+    Ok(404) => println("Got expected 404")
+    Ok(n)   => println("Status: #{n}")
+    Err(e)  => println("Error: #{e}")
+}
+
+
+// ── 6. Custom request with headers ───────────────────────────────────────────
+
+println("── HTTP CUSTOM REQUEST ─────────────────")
+
+var headers = {}
+headers["Authorization"] = "Bearer my-secret-token"
+headers["Accept"] = "application/json"
+headers["X-App-Name"] = "Zephyr"
+
+let custom_res = http_request("GET", "https://httpbin.org/headers", headers, "")
+match custom_res {
+    Ok(body) => println("Custom headers echoed back successfully")
+    Err(e)   => println("Error: #{e}")
+}
+
+
+// ── 7. PUT request ───────────────────────────────────────────────────────────
+
+println("── HTTP PUT ────────────────────────────")
+
+let put_body = "{\"id\": 1, \"title\": \"Updated post\", \"userId\": 1}"
+let put_res = http_put("https://jsonplaceholder.typicode.com/posts/1", put_body)
+match put_res {
+    Ok(body) => println("PUT succeeded")
+    Err(e)   => println("PUT failed: #{e}")
+}
+
+
+// ── 8. DELETE request ────────────────────────────────────────────────────────
+
+println("── HTTP DELETE ─────────────────────────")
+
+let del_res = http_delete("https://jsonplaceholder.typicode.com/posts/1")
+match del_res {
+    Ok(_)  => println("DELETE succeeded")
+    Err(e) => println("DELETE failed: #{e}")
+}
+
+
+// ── 9. URL encoding / decoding ───────────────────────────────────────────────
+
+println("── URL ENCODE / DECODE ─────────────────")
+
+let raw = "hello world & foo=bar+baz"
+let encoded = url_encode(raw)
+let decoded = url_decode(encoded)
+
+println("Original: #{raw}")
+println("Encoded:  #{encoded}")
+println("Decoded:  #{decoded}")
+
+
+// ── 10. URL parsing ──────────────────────────────────────────────────────────
+
+println("── URL PARSE ───────────────────────────")
+
+let parts = url_parse("https://api.example.com:8080/v2/users?page=2&limit=10#results")
+let p_scheme   = parts["scheme"]
+let p_host     = parts["host"]
+let p_port     = parts["port"]
+let p_path     = parts["path"]
+let p_query    = parts["query"]
+let p_fragment = parts["fragment"]
+println("Scheme:   #{p_scheme}")
+println("Host:     #{p_host}")
+println("Port:     #{p_port}")
+println("Path:     #{p_path}")
+println("Query:    #{p_query}")
+println("Fragment: #{p_fragment}")
+
+
+// ── 11. URL joining ──────────────────────────────────────────────────────────
+
+println("── URL JOIN ────────────────────────────")
+
+let base = "https://api.example.com/v1"
+
+println(url_join(base, "users"))          // https://api.example.com/v1/users
+println(url_join(base, "users/42"))       // https://api.example.com/v1/users/42
+println(url_join(base, "/v2/users"))      // https://api.example.com/v2/users (absolute path)
+println(url_join(base, "https://other.example.com/")) // passthrough absolute URL
+
+
+// ── 12. Query string builder ─────────────────────────────────────────────────
+
+println("── URL QUERY STRING ────────────────────")
+
+var params = {}
+params["search"] = "Zephyr language"
+params["page"] = "1"
+params["limit"] = "25"
+params["sort"] = "created_at"
+
+let qs = url_query_string(params)
+println("Query string: #{qs}")
+
+let full_url = url_join("https://api.example.com/search", "?#{qs}")
+println("Full URL: #{full_url}")
+
+
+// ── 13. Real-world pattern: fetch & check ────────────────────────────────────
+
+println("── REAL-WORLD PATTERN ──────────────────")
+
+fun fetch_user(id: Int) -> String {
+    let url = url_join("https://jsonplaceholder.typicode.com/users", str(id))
+    let res = http_get_json(url)
+    match res {
+        Ok(json)  => json
+        Err(msg)  => "Error fetching user: #{msg}"
+    }
+}
+
+fun is_reachable(url: String) -> Bool {
+    let res = http_status(url)
+    match res {
+        Ok(code) => code >= 200 && code < 400
+        Err(_)   => false
+    }
+}
+
+println(fetch_user(1))
+let reachable_httpbin = is_reachable("https://httpbin.org")
+let reachable_fake    = is_reachable("https://this-site-does-not-exist-xyz.com")
+println("httpbin reachable: #{reachable_httpbin}")
+println("fake site reachable: #{reachable_fake}")
+
+
+println("")
+println("Net demo complete!")

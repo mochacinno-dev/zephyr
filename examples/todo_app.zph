@@ -1,0 +1,61 @@
+// ═══════════════════════════════════════════════════════════
+// todo_app.zph — A simple todo app in Zephyr
+// ═══════════════════════════════════════════════════════════
+
+enum Priority {
+    Low
+    Medium
+    High
+}
+
+struct Todo {
+    pub id: Int
+    pub title: String
+    pub done: Bool
+    pub priority: Priority
+}
+
+/*
+fun priority_label(p: Priority) -> String {
+    match p {
+        Priority::Low    => "Low"
+        Priority::Medium => "Medium"
+        Priority::High   => "High"
+    }
+}
+*/
+
+fun print_todo(t: Todo) {
+    let status = { "UNSURE" }
+    if t.done == true { 
+        let status = { "DONE" }
+     } else {
+        let status = { "NOT DONE" }
+     }
+    println("  #{status} [#{t.id}] #{t.title}")
+}
+
+var todos = [
+    Todo { id: 1, title: "Learn Zephyr", done: true },
+    Todo { id: 2, title: "Build a project", done: false },
+    Todo { id: 3, title: "Write tests", done: false },
+    Todo { id: 4, title: "Deploy", done: false },
+]
+
+println("Todo List")
+println("─────────────────────────────────")
+
+for todo in todos {
+    print_todo(todo)
+}
+
+let total = len(todos)
+var done_count = 0
+for todo in todos {
+    if todo.done {
+        done_count = done_count + 1
+    }
+}
+
+println("")
+println("Progress: #{done_count}/#{total} complete")
